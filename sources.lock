@@ -1,0 +1,13 @@
+# Upstream sources the images are built from: NAME URL REF
+#
+# REF is a tag or a full commit hash, never a branch, so that a build is
+# reproducible. "make outdated" lists newer upstream tags. Patches in
+# patches/NAME/ are applied on top.
+
+mrbuild    https://github.com/dkogan/mrbuild.git    v1.21
+libdogleg  https://github.com/dkogan/libdogleg.git  v0.18
+vnlog      https://github.com/dkogan/vnlog.git      v1.43
+# master: mrgingham v1.28 plus the find_board() and observe-pixel-uncertainty tests
+mrgingham  https://github.com/dkogan/mrgingham.git  8775c0938e8187f93e9272c76bb3bcb83a95e111
+# master: newer than the v2.5.2 release
+mrcal      https://github.com/dkogan/mrcal.git      119d5b06e5c4628b2c03a7e7f82fe04445d8d8ac

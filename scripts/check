@@ -1,0 +1,47 @@
+#!/bin/bash
+# Usage: scripts/check IMAGE...
+#
+# Smoke-tests the images through the same wrappers the linked tools use, from
+# a scratch directory outside the repository: every tool an image ships must
+# start, and a file written in the current directory must be owned by the
+# caller.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+bin=$(pwd -P)/bin
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+cd "$work"
+
+failed=0
+for image in "$@"; do
+    tools=$("$bin/in-$image" cat "/usr/share/calibration-containers/$image.tools" < /dev/null)
+    for t in $tools; do
+        # A tool that rejects --help (vnl-gen-header) still passes if it
+        # started: nothing failed to load, the command was found (126/127),
+        # podman didn't fail (125) and it wasn't killed by a signal (128+N;
+        # perl's die exits 255, which counts as running)
+        rc=0
+        err=$("$bin/in-$image" "$t" --help 2>&1 < /dev/null > /dev/null) || rc=$?
+        if (( rc == 0 )); then
+            printf 'ok    %-10s %s\n' "$image" "$t"
+        elif (( rc < 125 || rc > 192 )) && ! grep -qE \
+                "Can't locate|ModuleNotFoundError|ImportError|error while loading shared libraries" <<< "$err"; then
+            printf 'ok    %-10s %s (no --help, but it runs)\n' "$image" "$t"
+        else
+            printf 'FAIL  %-10s %s\n%s\n' "$image" "$t" "$err"
+            failed=1
+        fi
+    done
+
+    rm -f out
+    "$bin/in-$image" sh -c 'echo test > out' < /dev/null
+    if [[ $(stat -c %u out) == $(id -u) ]]; then
+        printf 'ok    %-10s writes files as the caller\n' "$image"
+    else
+        printf 'FAIL  %-10s writes files as uid %s\n' "$image" "$(stat -c %u out)"
+        failed=1
+    fi
+done
+exit $failed

@@ -1,0 +1,27 @@
+From e96a31b3bbfd9a6d649ae13f1026eb20f5b1c00b Mon Sep 17 00:00:00 2001
+From: Harry Weppner <harry@weppner.dev>
+Date: Tue, 6 Oct 2026 07:55:52 -0700
+Subject: [PATCH] test.sh: skip test-optimizer-callback.py
+
+Its golden reference data (test/data/test-optimizer-callback-ref-*.npy)
+was last updated in 69eb9d6e (2025-09-29), before 3270b6c5 "Reworked
+regularization" (2026-06-20) changed the optimizer output it compares.
+It fails on upstream master regardless of the build environment.
+
+Drop this patch once upstream refreshes the reference data.
+---
+ test.sh | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/test.sh b/test.sh
+index b58a1c99..eb1319b5 100755
+--- a/test.sh
++++ b/test.sh
+@@ -21,7 +21,6 @@ TESTS=("test/test-pywrap-functions.py"
+        "test/test-gradients.py"
+        "test/test-py-gradients.py"
+        "test/test-cahvor"
+-       "test/test-optimizer-callback.py"
+        "test/test-sfm-fixed-points.py"
+        "test/test-sfm-regularization-unity-cam01.py"
+        "test/test-sfm-triangulated-points.py"

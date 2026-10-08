@@ -1,0 +1,46 @@
+#!/bin/bash
+# Usage: scripts/build-image IMAGE SOURCE...
+#
+# Fetches each SOURCE (see fetch-source) and builds images/IMAGE/Containerfile
+# with each one available as the build context of the same name. The image is
+# tagged $PREFIX$IMAGE:VERSION and $PREFIX$IMAGE:latest, where VERSION is the
+# last SOURCE's version, and labelled with that source's URL and commit.
+#
+# Environment (set by the Makefile): ENGINE, PREFIX, DEBIAN_IMAGE, and
+# SRC_<source>/LOCAL for building from local checkouts, and BUILD_ARGS: extra
+# space-separated NAME=VALUE build args, e.g. "MRCAL_TESTS=test-all".
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+image=$1
+shift
+
+args=(
+    --build-arg "DEBIAN_IMAGE=$DEBIAN_IMAGE"
+    --build-arg "PREFIX=$PREFIX"
+)
+for a in ${BUILD_ARGS:-}; do
+    args+=(--build-arg "$a")
+done
+for s in "$@"; do
+    scripts/fetch-source "$s"
+    # shellcheck source=/dev/null
+    . ".cache/src/$s.env"
+    args+=(
+        --build-context "$s=.cache/src/$s"
+        --build-arg "VERSION_$s=$SOURCE_VERSION"
+    )
+done
+
+tag=$(printf %s "$SOURCE_VERSION" | tr -c 'A-Za-z0-9_.-' _)
+args+=(
+    --label "org.opencontainers.image.source=$SOURCE_URL"
+    --label "org.opencontainers.image.revision=$SOURCE_REV"
+    --label "org.opencontainers.image.version=$SOURCE_VERSION"
+    -t "$PREFIX$image:$tag"
+    -t "$PREFIX$image:latest"
+)
+
+echo "Building $PREFIX$image:$tag" >&2
+exec "$ENGINE" build "${args[@]}" -f "images/$image/Containerfile" "images/$image"

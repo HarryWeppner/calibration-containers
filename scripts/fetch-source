@@ -1,0 +1,91 @@
+#!/bin/bash
+# Usage: scripts/fetch-source NAME
+#
+# Puts the source tree for NAME into .cache/src/NAME, with patches/NAME/*.patch
+# applied, and describes it in .cache/src/NAME.env (SOURCE_URL, SOURCE_REV,
+# SOURCE_VERSION, SOURCE_STAMP).
+#
+# By default the tree is the ref pinned in sources.lock, exported from a bare
+# clone in .cache/git/NAME. If SRC_NAME is set (or LOCAL=1, which means
+# $LOCAL_ROOT/NAME, default ~/Code/NAME), it's that checkout's working tree
+# instead: tracked and untracked-but-not-ignored files, uncommitted edits
+# included, build outputs left out.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+name=$1
+read -r url ref < <(awk -v n="$name" '$1 == n { print $2, $3 }' sources.lock) || true
+if [[ -z ${url:-} || -z ${ref:-} ]]; then
+    echo "fetch-source: $name isn't in sources.lock" >&2
+    exit 1
+fi
+
+srcvar=SRC_$name
+checkout=${!srcvar:-}
+checkout=${checkout/#\~/$HOME}
+if [[ -z $checkout && ${LOCAL:-} == 1 ]]; then
+    checkout=${LOCAL_ROOT:-$HOME/Code}/$name
+fi
+
+dest=.cache/src/$name
+envfile=$dest.env
+patches=(patches/"$name"/*.patch)
+[[ -e ${patches[0]} ]] || patches=()
+
+# mrbuild's VERSION_FROM_PROJECT, applied to "git describe --tags": drop a
+# leading "path/", a leading "v" and a trailing ".postN"
+normalize_version() { sed -E 's|^.*/||; s/^v//; s/\.post[0-9]+$//'; }
+
+if [[ -n $checkout ]]; then
+    checkout=$(cd "$checkout" && pwd -P)
+    rev=$(git -C "$checkout" rev-parse HEAD)
+    version=$(git -C "$checkout" describe --tags --dirty --always | normalize_version)
+    stamp=
+else
+    gitdir=.cache/git/$name
+    [[ -d $gitdir ]] || git clone --quiet --bare "$url" "$gitdir"
+    if ! rev=$(git --git-dir="$gitdir" rev-parse --verify --quiet "$ref^{commit}"); then
+        git --git-dir="$gitdir" fetch --quiet --tags "$url" '+refs/heads/*:refs/heads/*'
+        rev=$(git --git-dir="$gitdir" rev-parse --verify "$ref^{commit}")
+    fi
+    version=$(git --git-dir="$gitdir" describe --tags --always "$rev" | normalize_version)
+    # The export is reused while the ref and the patches stay the same
+    stamp=$rev-$(cat /dev/null "${patches[@]}" | sha256sum | cut -c1-16)
+    if [[ -d $dest && -f $envfile ]] && grep -qxF "SOURCE_STAMP=$stamp" "$envfile"; then
+        exit 0
+    fi
+fi
+
+mkdir -p .cache/src
+tmp=$(mktemp -d .cache/src/."$name".XXXXXX)
+trap 'rm -rf "$tmp"' EXIT
+
+if [[ -n $checkout ]]; then
+    git -C "$checkout" ls-files -z --cached --others --exclude-standard --deduplicate \
+        | tar -C "$checkout" --null --files-from=- --ignore-failed-read -cf - \
+        | tar -C "$tmp" -xf -
+else
+    git --git-dir="$gitdir" archive "$rev" | tar -C "$tmp" -xf -
+fi
+
+for p in "${patches[@]}"; do
+    # --forward: a patch the source already has is an error, not silently
+    # reversed. Drop it once upstream has the fix
+    patch -d "$tmp" -p1 --batch --forward --quiet < "$p" \
+        || { echo "fetch-source: $p doesn't apply to $name $version (already applied?)" >&2; exit 1; }
+done
+[[ ${#patches[@]} -eq 0 ]] || version=$version-patched
+
+{
+    printf 'SOURCE_URL=%q\n'     "$url"
+    printf 'SOURCE_REV=%q\n'     "$rev"
+    printf 'SOURCE_VERSION=%q\n' "$version"
+    printf 'SOURCE_STAMP=%s\n'   "$stamp"
+} > "$tmp.env"
+
+rm -rf "$dest"
+mv "$tmp" "$dest"
+mv "$tmp.env" "$envfile"
+trap - EXIT
+echo "$name: ${checkout:-$url} at $version" >&2

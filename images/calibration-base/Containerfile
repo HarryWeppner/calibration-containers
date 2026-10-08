@@ -1,0 +1,41 @@
+# Build environment shared by the other images: Debian's toolchain, plus mrbuild
+# and libdogleg built from the pinned sources. Debian's own packages of those
+# two are too old for current mrcal and vnlog. dogleg.h goes in /usr/include,
+# where mrcal looks for it and Debian's libdogleg-dev puts it.
+#
+# Build contexts: mrbuild, libdogleg (see scripts/build-image)
+#
+# Only used as a build stage, never shipped. libdogleg's install tree is kept in
+# /stage/libdogleg so that runtime images can copy just the shared library.
+
+ARG DEBIAN_IMAGE
+FROM ${DEBIAN_IMAGE}
+ARG DEBIAN_FRONTEND=noninteractive
+
+# python3-setuptools: mrbuild finds the python module path via distutils, which
+# python 3.12+ no longer has. zsh runs the test suites
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential pkg-config chrpath mawk perl zsh \
+        python3-dev python3-numpy python3-setuptools \
+        libsuitesparse-dev liblapack-dev
+
+# mrbuild is a set of Makefile fragments and helper scripts. These are the
+# paths choose_mrbuild.mk looks for, as Debian's mrbuild package installs them
+COPY --from=mrbuild Makefile.common.header Makefile.common.footer /usr/include/mrbuild/
+COPY --from=mrbuild bin/ /usr/bin/
+
+ARG VERSION_libdogleg
+WORKDIR /src/libdogleg
+COPY --from=libdogleg . .
+RUN make -j"$(nproc)" VERSION="$VERSION_libdogleg" \
+    && make check VERSION="$VERSION_libdogleg" \
+    && make install VERSION="$VERSION_libdogleg" DESTDIR=/stage/libdogleg \
+        INSTALL_ROOT_INCLUDE=/usr/include \
+    && cp -a /stage/libdogleg/. / \
+    && ldconfig
+
+WORKDIR /

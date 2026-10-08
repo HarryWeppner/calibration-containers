@@ -1,0 +1,74 @@
+# mrcal: the calibration library, Python package and mrcal-* tools, built and
+# tested on calibration-base. The runtime image is layered on the mrgingham
+# image, so it has the whole calibration toolchain: corner finding included.
+#
+# Build context: mrcal (see scripts/build-image)
+#
+# MRCAL_TESTS picks the test set run during the build ("test-nosampling",
+# "test-all", ...; see mrcal's Makefile). Empty skips the tests.
+
+ARG PREFIX
+
+######################################## build
+FROM ${PREFIX}calibration-base AS build
+ARG DEBIAN_FRONTEND=noninteractive
+
+# numpysane is needed for the build itself: the *-genpywrap.py generators use it.
+# The rest of the python packages and vnlog are for the tests
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        re2c libpng-dev libjpeg-dev libstb-dev liblist-moreutils-perl \
+        python3-numpysane python3-gnuplotlib python3-scipy python3-opencv \
+        python3-yaml python3-shapely \
+        vnlog python3-vnlog
+
+ARG VERSION_mrcal
+ARG MRCAL_TESTS=test-nosampling
+WORKDIR /src/mrcal
+COPY --from=mrcal . .
+RUN make -j"$(nproc)" VERSION="$VERSION_mrcal" \
+    && if [ -n "$MRCAL_TESTS" ]; then make VERSION="$VERSION_mrcal" "$MRCAL_TESTS"; fi \
+    && make install VERSION="$VERSION_mrcal" DESTDIR=/stage \
+    && mkdir -p /stage/usr/share/calibration-containers /stage/usr/share/doc/mrcal \
+    && ls /stage/usr/bin > /stage/usr/share/calibration-containers/mrcal.tools \
+    && find . -maxdepth 1 \( -name 'README*' -o -name 'LICENSE*' \) \
+            -exec cp -t /stage/usr/share/doc/mrcal {} +
+
+# Which Debian packages provide the shared libraries libmrcal and the python
+# extension modules link against, so that the runtime stage installs exactly
+# those. libdogleg isn't from a package: the runtime stage copies it
+RUN find /stage -name '*.so' -type f \
+    | LD_LIBRARY_PATH=$(echo /stage/usr/lib/*-linux-gnu) xargs ldd \
+    | awk '/=> \// && $3 !~ /^\/stage\// && $3 !~ /libdogleg/ {print $3}' \
+    | xargs -r readlink -f | xargs -r dpkg -S | cut -d: -f1 | sort -u \
+    | tee /runtime-packages.txt
+
+######################################## runtime
+FROM ${PREFIX}mrgingham
+ARG DEBIAN_FRONTEND=noninteractive
+
+# python3-fltk, python3-gl-image-display and the Mesa GL drivers are for the
+# interactive visualizers (mrcal-stereo --viz stereo)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=bind,from=build,source=/runtime-packages.txt,target=/tmp/runtime-packages.txt \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        $(cat /tmp/runtime-packages.txt) \
+        python3-opencv python3-yaml python3-shapely \
+        python3-fltk python3-gl-image-display libgl1-mesa-dri libglx-mesa0
+
+COPY --from=build /stage/libdogleg/usr/lib/ /usr/lib/
+COPY --from=build /stage/usr /usr
+RUN ldconfig
+
+# The tests ran in the build stage. Check that the tools and the python
+# package load
+RUN python3 -c 'import mrcal; print(mrcal.__file__)' \
+    && mrcal-calibrate-cameras --help > /dev/null \
+    && mrcal-stereo --help > /dev/null
+
+ENTRYPOINT []
+CMD ["mrcal-calibrate-cameras", "--help"]

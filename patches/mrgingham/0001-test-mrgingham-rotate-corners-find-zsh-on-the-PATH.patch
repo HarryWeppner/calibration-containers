@@ -1,0 +1,20 @@
+From b277369a72dc01ca0764396b3ed0e4674c3cebf8 Mon Sep 17 00:00:00 2001
+From: Harry Weppner <harry@weppner.dev>
+Date: Sun, 4 Oct 2026 20:51:55 -0700
+Subject: [PATCH] test--mrgingham-rotate-corners: find zsh on the PATH
+
+It isn't always at /bin/zsh.
+---
+ test/test--mrgingham-rotate-corners | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/test/test--mrgingham-rotate-corners b/test/test--mrgingham-rotate-corners
+index cbd931c..4d3833a 100755
+--- a/test/test--mrgingham-rotate-corners
++++ b/test/test--mrgingham-rotate-corners
+@@ -1,4 +1,4 @@
+-#!/bin/zsh
++#!/usr/bin/env zsh
+ 
+ program=${0:h}/../mrgingham-rotate-corners
+ datafile=${0:h}/data/data-for-rotate-corners.vnl

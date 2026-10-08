@@ -1,0 +1,71 @@
+# mrgingham: the chessboard corner finder, its library and Python module, built
+# and tested on calibration-base, then copied into a slim runtime image.
+#
+# Build context: mrgingham (see scripts/build-image)
+
+ARG DEBIAN_IMAGE
+ARG PREFIX
+
+######################################## build
+FROM ${PREFIX}calibration-base AS build
+ARG DEBIAN_FRONTEND=noninteractive
+
+# numpysane, gnuplotlib and vnlog are only needed by the tests here
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libopencv-dev libboost-dev \
+        vnlog python3-vnlog python3-numpysane python3-gnuplotlib
+
+ARG VERSION_mrgingham
+WORKDIR /src/mrgingham
+COPY --from=mrgingham . .
+
+# --as-needed keeps us from linking against every OpenCV module that
+# "pkg-config --libs opencv4" lists, which keeps the runtime image small
+ENV LDFLAGS=-Wl,--as-needed
+RUN make -j"$(nproc)" VERSION="$VERSION_mrgingham" \
+    && make test VERSION="$VERSION_mrgingham" \
+    && test/test--mrgingham-observe-pixel-uncertainty \
+    && make install VERSION="$VERSION_mrgingham" DESTDIR=/stage MANDIR=usr/share/man/man1 \
+    && mkdir -p /stage/usr/share/calibration-containers /stage/usr/share/doc/mrgingham \
+    && ls /stage/usr/bin > /stage/usr/share/calibration-containers/mrgingham.tools \
+    && find . -maxdepth 1 \( -name 'README*' -o -name 'LICENSE*' \) \
+            -exec cp -t /stage/usr/share/doc/mrgingham {} +
+
+# Which Debian packages provide the shared libraries we link against, so that
+# the runtime stage installs exactly those (and not the -dev packages). ldd is
+# transitive, so the binary covers libmrgingham and the python module too
+RUN LD_LIBRARY_PATH=$(echo /stage/usr/lib/*-linux-gnu) ldd /stage/usr/bin/mrgingham \
+    | awk '/=> \// && $3 !~ /^\/stage\// {print $3}' \
+    | xargs -r readlink -f | xargs -r dpkg -S | cut -d: -f1 | sort -u \
+    | tee /runtime-packages.txt
+
+######################################## runtime
+FROM ${DEBIAN_IMAGE}
+ARG DEBIAN_FRONTEND=noninteractive
+
+# python3-setuptools: numpysane still imports distutils, which python 3.12+ no
+# longer has; setuptools provides a stand-in. scipy: --show histograms
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=bind,from=build,source=/runtime-packages.txt,target=/tmp/runtime-packages.txt \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        $(cat /tmp/runtime-packages.txt) \
+        python3 python3-numpy python3-numpysane python3-gnuplotlib gnuplot-x11 \
+        python3-scipy python3-setuptools \
+        vnlog python3-vnlog mawk
+
+COPY --from=build /stage/usr /usr
+
+# The tests ran in the build stage. Check that the installed tools and their
+# libraries load
+RUN mrgingham --help > /dev/null \
+    && python3 -c 'import mrgingham, numpysane, gnuplotlib, vnlog, scipy.special' \
+    && mrgingham-observe-pixel-uncertainty --help > /dev/null
+
+WORKDIR /work
+ENTRYPOINT ["mrgingham"]

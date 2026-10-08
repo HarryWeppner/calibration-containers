@@ -1,0 +1,55 @@
+# vnlog: the vnl-* tools, the C library and the perl modules, built and tested
+# on calibration-base, then copied into a slim runtime image.
+#
+# Build context: vnlog (see scripts/build-image)
+
+ARG DEBIAN_IMAGE
+ARG PREFIX
+
+######################################## build
+FROM ${PREFIX}calibration-base AS build
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        moreutils \
+        libipc-run-perl libtext-diff-perl libstring-shellquote-perl \
+        liblist-moreutils-perl libtext-table-perl
+
+ARG VERSION_vnlog
+WORKDIR /src/vnlog
+COPY --from=vnlog . .
+RUN make -j"$(nproc)" VERSION="$VERSION_vnlog" all doc \
+    && make -j"$(nproc)" VERSION="$VERSION_vnlog" check \
+    && make VERSION="$VERSION_vnlog" install DESTDIR=/stage \
+    && mkdir -p /stage/usr/share/zsh/site-functions \
+                /stage/usr/share/bash-completion/completions \
+                /stage/usr/share/calibration-containers \
+                /stage/usr/share/doc/vnlog \
+    && cp completions/zsh/*  /stage/usr/share/zsh/site-functions/ \
+    && cp completions/bash/* /stage/usr/share/bash-completion/completions/ \
+    && ls /stage/usr/bin > /stage/usr/share/calibration-containers/vnlog.tools \
+    && find . -maxdepth 1 \( -name 'README*' -o -name 'LICENSE*' \) \
+            -exec cp -t /stage/usr/share/doc/vnlog {} +
+
+######################################## runtime
+FROM ${DEBIAN_IMAGE}
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        mawk moreutils perl \
+        liblist-moreutils-perl libtext-table-perl libstring-shellquote-perl
+
+COPY --from=build /stage/usr /usr
+
+# Fail the build if any tool is missing a runtime dependency
+RUN for t in /usr/bin/vnl-*; do perl -c "$t" || exit 1; done
+
+WORKDIR /data
+CMD ["vnl-filter", "--help"]

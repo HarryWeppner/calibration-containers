@@ -1,0 +1,31 @@
+#!/bin/bash
+# Usage: scripts/outdated
+#
+# For each source in sources.lock, prints the pinned ref and the newest
+# upstream release tag (pre-releases left out). "<-" marks a pin with a
+# newer tag. Edit sources.lock to move a pin.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+printf '%-10s  %-42s  %s\n' SOURCE PINNED 'NEWEST TAG'
+grep -vE '^\s*(#|$)' sources.lock | while read -r name url ref; do
+    newest=$(git ls-remote --tags --refs "$url" 'v*' \
+                 | sed 's|.*refs/tags/||' | grep -vE 'pre|rc' | sort -V | tail -n1)
+    shown=$ref flag=
+    if [[ $ref =~ ^[0-9a-f]{40}$ ]]; then
+        # A commit pin: show where it is relative to the tags, and flag it
+        # only if a tag has been made since
+        if [[ -d .cache/git/$name ]] \
+            && desc=$(git --git-dir=".cache/git/$name" describe --tags "$ref" 2>/dev/null); then
+            shown="${ref:0:12} ($desc)"
+            git --git-dir=".cache/git/$name" merge-base --is-ancestor "$newest" "$ref" 2>/dev/null \
+                || flag='  <-'
+        else
+            shown="${ref:0:12}"
+        fi
+    elif [[ $ref != "$newest" ]]; then
+        flag='  <-'
+    fi
+    printf '%-10s  %-42s  %s%s\n' "$name" "$shown" "${newest:-?}" "$flag"
+done

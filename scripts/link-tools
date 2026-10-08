@@ -1,0 +1,59 @@
+#!/bin/bash
+# Usage: scripts/link-tools link|unlink BINDIR IMAGE...
+#
+# link: symlinks each tool an image ships (its
+# /usr/share/calibration-containers/IMAGE.tools) into BINDIR, pointing at
+# bin/in-IMAGE. An existing symlink to one of our wrappers, or to the
+# per-repository wrappers these images replace, is updated; anything else in
+# the way is left alone and reported.
+#
+# unlink: removes every symlink in BINDIR that points at one of our wrappers.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+action=$1 bindir=$2
+shift 2
+bin=$(pwd -P)/bin
+
+# Ours, or one of the wrappers from before this repository existed
+ours() {
+    local target
+    target=$(readlink "$1") || return 1
+    case $target in
+        "$bin"/in-* | */mrcal-container | */mrgingham-container | */vnl-container) return 0 ;;
+    esac
+    return 1
+}
+
+case $action in
+link)
+    mkdir -p "$bindir"
+    for image in "$@"; do
+        tools=$("$bin/in-$image" cat "/usr/share/calibration-containers/$image.tools" < /dev/null)
+        for t in $tools; do
+            f=$bindir/$t
+            if [[ -e $f || -L $f ]] && ! ours "$f"; then
+                echo "Skipping $f: already exists and isn't one of our links" >&2
+                continue
+            fi
+            ln -sfn "$bin/in-$image" "$f"
+        done
+        echo "Linked the $image tools into $bindir"
+    done
+    case ":$PATH:" in *":$bindir:"*) ;; *) echo "NOTE: $bindir isn't in your PATH" >&2 ;; esac
+    ;;
+unlink)
+    for f in "$bindir"/*; do
+        [[ -L $f ]] || continue
+        target=$(readlink "$f")
+        if [[ $target == "$bin"/in-* ]]; then
+            rm "$f"
+        fi
+    done
+    ;;
+*)
+    echo "Usage: $0 link|unlink BINDIR IMAGE..." >&2
+    exit 1
+    ;;
+esac

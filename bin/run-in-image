@@ -1,0 +1,116 @@
+#!/bin/bash
+# Runs a tool in one of the calibration images as if it were installed on the
+# host. bin/in-IMAGE is a symlink to this script, and "make links" symlinks
+# each tool's name in ~/.local/bin to bin/in-IMAGE: the link's name selects the
+# tool and its target the image. Invoked as in-IMAGE itself, the first argument
+# is the command:
+#
+#   in-mrcal python3 -c 'import mrcal; print(mrcal.__file__)'
+#
+# File access: $HOME, /tmp, /mnt, /media, /run/media, /srv and the current
+# directory are mounted at the same paths, so file arguments under those work
+# unchanged. Files written are owned by the calling user.
+#
+# Display: with DISPLAY set, the host's X11 (or XWayland) display is passed
+# through so plot windows open, including ssh -X's TCP displays.
+#
+# Environment:
+#   CALIBRATION_ENGINE   container engine (default: podman)
+#   CALIBRATION_PREFIX   image name prefix (default: localhost/)
+#   CALIBRATION_TAG      image tag (default: latest)
+
+set -euo pipefail
+
+tool=${0##*/}
+if [[ $tool == in-* ]]; then
+    wrapper=$tool
+else
+    wrapper=$(readlink "$0") || true
+    wrapper=${wrapper##*/}
+fi
+if [[ $wrapper != in-* ]]; then
+    echo "Run this as bin/in-IMAGE, or through a link to one" >&2
+    exit 1
+fi
+image=${CALIBRATION_PREFIX:-localhost/}${wrapper#in-}:${CALIBRATION_TAG:-latest}
+engine=${CALIBRATION_ENGINE:-podman}
+
+if [[ $tool == in-* ]]; then
+    if (( $# == 0 )); then
+        echo "Usage: $tool COMMAND [ARGS...]" >&2
+        exit 1
+    fi
+    tool=$1
+    shift
+fi
+
+# Directories that would shadow the container's own filesystem if mounted
+mountable() {
+    case $1 in
+        / | /usr | /usr/* | /etc | /etc/* | /bin | /sbin | /lib | /lib64 | \
+        /proc | /proc/* | /sys | /sys/* | /dev | /dev/* | /run | /var) return 1 ;;
+    esac
+}
+
+cwd=$(pwd -P)
+mounted=()
+add_mount() {
+    local d
+    [[ -d $1 ]] || return 0
+    d=$(cd "$1" && pwd -P)
+    mountable "$d" || return 0
+    for m in "${mounted[@]}"; do
+        [[ $d == "$m" || $d == "$m"/* ]] && return 0
+    done
+    mounted+=("$d")
+}
+for d in "${HOME:-}" /tmp /mnt /media /run/media /srv; do
+    [[ -n $d ]] && add_mount "$d"
+done
+add_mount "$cwd"
+mountable "$cwd" || echo "$tool: $cwd can't be mounted into the container; relative paths won't resolve" >&2
+
+opts=(
+    --rm -i
+    # Without an init process the tool is PID 1, which the kernel doesn't kill
+    # on signals it has no handler for, so Ctrl-C would be ignored
+    --init
+    --log-driver=none
+    # Don't relabel the mounted directories for SELinux
+    --security-opt label=disable
+    -w "$cwd"
+    --entrypoint "$tool"
+)
+if [[ ${engine##*/} == podman ]]; then
+    opts+=(--userns=keep-id)
+else
+    opts+=(--user "$(id -u):$(id -g)" -e HOME)
+fi
+
+# A local display (":0") is a socket in /tmp/.X11-unix, which the /tmp mount
+# covers; a TCP one (ssh -X's "localhost:10.0") needs the host's network, and
+# its hostname for the X cookie to match. Otherwise there's no network
+if [[ -n ${DISPLAY:-} ]]; then
+    # NO_AT_BRIDGE: GTK would otherwise warn about the unreachable accessibility bus
+    opts+=(-e DISPLAY -e NO_AT_BRIDGE=1)
+    if [[ $DISPLAY == :* ]]; then
+        opts+=(--network=none)
+    else
+        opts+=(--network=host --uts=host)
+    fi
+    xauth=${XAUTHORITY:-$HOME/.Xauthority}
+    [[ -f $xauth ]] && opts+=(-e XAUTHORITY="$xauth" -v "$xauth:$xauth:ro")
+else
+    opts+=(--network=none)
+fi
+
+# A tty gives line-buffered output, like a native run. Only when stdin, stdout
+# and stderr are all terminals: a tty merges stdout and stderr, and with piped
+# stdin it echoes the input and never passes on EOF
+[[ -t 0 && -t 1 && -t 2 ]] && opts+=(-t)
+
+for d in "${mounted[@]}"; do
+    opts+=(-v "$d:$d")
+done
+
+exec "$engine" run "${opts[@]}" "$image" "$@"
