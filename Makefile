@@ -41,8 +41,9 @@ IMAGES := vnlog mrgingham mrcal
 
 all: $(IMAGES)
 
+# build-image versions an image after its last source
 calibration-base:
-	scripts/build-image $@ mrbuild libdogleg
+	scripts/build-image $@ mrbuild vnlog libdogleg
 vnlog: calibration-base
 	scripts/build-image $@ vnlog
 mrgingham: calibration-base

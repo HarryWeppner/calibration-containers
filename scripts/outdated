@@ -10,21 +10,24 @@ cd "$(dirname "$0")/.."
 
 printf '%-10s  %-42s  %s\n' SOURCE PINNED 'NEWEST TAG'
 grep -vE '^\s*(#|$)' sources.lock | while read -r name url ref; do
+    # Empty when the remote is unreachable or has no release tags: report
+    # that ("?") and carry on with the other sources
     newest=$(git ls-remote --tags --refs "$url" 'v*' \
-                 | sed 's|.*refs/tags/||' | grep -vE 'pre|rc' | sort -V | tail -n1)
+                 | sed 's|.*refs/tags/||' | grep -vE 'pre|rc' | sort -V | tail -n1) || true
     shown=$ref flag=
     if [[ $ref =~ ^[0-9a-f]{40}$ ]]; then
         # A commit pin: show where it is relative to the tags, and flag it
         # only if a tag has been made since
+        shown=${ref:0:12}
         if [[ -d .cache/git/$name ]] \
             && desc=$(git --git-dir=".cache/git/$name" describe --tags "$ref" 2>/dev/null); then
-            shown="${ref:0:12} ($desc)"
-            git --git-dir=".cache/git/$name" merge-base --is-ancestor "$newest" "$ref" 2>/dev/null \
-                || flag='  <-'
-        else
-            shown="${ref:0:12}"
+            shown="$shown ($desc)"
+            if [[ -n $newest ]]; then
+                git --git-dir=".cache/git/$name" merge-base --is-ancestor "$newest" "$ref" 2>/dev/null \
+                    || flag='  <-'
+            fi
         fi
-    elif [[ $ref != "$newest" ]]; then
+    elif [[ -n $newest && $ref != "$newest" ]]; then
         flag='  <-'
     fi
     printf '%-10s  %-42s  %s%s\n' "$name" "$shown" "${newest:-?}" "$flag"

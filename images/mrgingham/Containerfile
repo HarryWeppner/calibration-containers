@@ -1,5 +1,6 @@
 # mrgingham: the chessboard corner finder, its library and Python module, built
-# and tested on calibration-base, then copied into a slim runtime image.
+# and tested on calibration-base, then copied into a slim runtime image along
+# with calibration-base's vnlog (tools and Python module).
 #
 # Build context: mrgingham (see scripts/build-image)
 
@@ -10,13 +11,14 @@ ARG PREFIX
 FROM ${PREFIX}calibration-base AS build
 ARG DEBIAN_FRONTEND=noninteractive
 
-# numpysane, gnuplotlib and vnlog are only needed by the tests here
+# numpysane and gnuplotlib are only needed by the tests here. They use
+# calibration-base's vnlog
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update \
     && apt-get install -y --no-install-recommends \
         libopencv-dev libboost-dev \
-        vnlog python3-vnlog python3-numpysane python3-gnuplotlib
+        python3-numpysane python3-gnuplotlib
 
 ARG VERSION_mrgingham
 WORKDIR /src/mrgingham
@@ -51,14 +53,15 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     --mount=type=bind,from=build,source=/runtime-packages.txt,target=/tmp/runtime-packages.txt \
+    --mount=type=bind,from=build,source=/stage/vnlog-runtime-packages.txt,target=/tmp/vnlog-runtime-packages.txt \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        $(cat /tmp/runtime-packages.txt) \
+        $(cat /tmp/runtime-packages.txt /tmp/vnlog-runtime-packages.txt) \
         python3 python3-numpy python3-numpysane python3-gnuplotlib gnuplot-x11 \
-        python3-scipy python3-setuptools \
-        vnlog python3-vnlog mawk
+        python3-scipy python3-setuptools
 
+COPY --from=build /stage/vnlog/usr /stage/vnlog-python/usr /usr/
 COPY --from=build /stage/usr /usr
 
 # The tests ran in the build stage. Check that the installed tools and their

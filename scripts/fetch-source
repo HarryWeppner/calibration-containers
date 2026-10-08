@@ -25,7 +25,9 @@ srcvar=SRC_$name
 checkout=${!srcvar:-}
 checkout=${checkout/#\~/$HOME}
 if [[ -z $checkout && ${LOCAL:-} == 1 ]]; then
-    checkout=${LOCAL_ROOT:-$HOME/Code}/$name
+    root=${LOCAL_ROOT:-$HOME/Code}
+    # zsh leaves the ~ in "make LOCAL_ROOT=~/src" alone
+    checkout=${root/#\~/$HOME}/$name
 fi
 
 dest=.cache/src/$name

@@ -14,15 +14,15 @@ FROM ${PREFIX}calibration-base AS build
 ARG DEBIAN_FRONTEND=noninteractive
 
 # numpysane is needed for the build itself: the *-genpywrap.py generators use it.
-# The rest of the python packages and vnlog are for the tests
+# The rest of the python packages are for the tests, which use calibration-base's
+# vnlog
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update \
     && apt-get install -y --no-install-recommends \
         re2c libpng-dev libjpeg-dev libstb-dev liblist-moreutils-perl \
         python3-numpysane python3-gnuplotlib python3-scipy python3-opencv \
-        python3-yaml python3-shapely \
-        vnlog python3-vnlog
+        python3-yaml python3-shapely
 
 ARG VERSION_mrcal
 ARG MRCAL_TESTS=test-nosampling

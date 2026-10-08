@@ -36,20 +36,25 @@ make and `patch`; `make bump-debian` also needs skopeo.
 
 | Image                | Contents                                                       |
 |----------------------|----------------------------------------------------------------|
-| `calibration-base`   | Build stage only: Debian toolchain, mrbuild, libdogleg         |
-| `vnlog`              | `vnl-*` tools, libvnlog, Perl and Python modules               |
-| `mrgingham`          | `mrgingham*` tools, libmrgingham, the Python module, vnlog     |
+| `calibration-base`   | Build stage only: Debian toolchain, mrbuild, libdogleg, vnlog  |
+| `vnlog`              | `vnl-*` tools, libvnlog, the Perl modules                      |
+| `mrgingham`          | `mrgingham*` tools, libmrgingham, the Python module, plus vnlog with its Python module |
 | `mrcal`              | everything in `mrgingham`, plus libmrcal, the `mrcal` Python package and the `mrcal-*` tools |
 
 ```
 calibration-base ──┬──> vnlog
  (mrbuild,         ├──> mrgingham ──> mrcal (runtime layered on mrgingham)
-  libdogleg)       └───────────────────┘ (build stage)
+  libdogleg,       └───────────────────┘ (build stage)
+  vnlog)
 ```
 
-Each image builds in `calibration-base`, runs the upstream test suite, installs
-into a staging tree, and copies that into a slim Debian runtime image with only
-the runtime libraries it links against, then smoke-tests the result. Images are
+`calibration-base` builds and tests libdogleg and vnlog, so every image, and
+every test suite, uses the pinned vnlog. mrgingham and mrcal each build in
+`calibration-base`, run the upstream test suite, install into a staging tree,
+and copy that into a slim Debian runtime image with only the runtime libraries
+it links against, then smoke-test the result. The vnlog image is just the
+runtime part, copied from `calibration-base`; it has no Python, so vnlog's
+Python module is only in mrgingham and mrcal. Images are
 tagged `localhost/NAME:VERSION` (from `git describe` of the source) and
 `localhost/NAME:latest`, and labelled with the source URL and commit
 (`podman image inspect`).

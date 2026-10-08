@@ -11,7 +11,8 @@ header. Each script and Containerfile explains itself in its header comment.
 
 - Upstream test suites run inside each image's build stage, so `make` is slow;
   build just the image you changed (`make mrgingham`). Changing
-  `calibration-base` rebuilds and re-tests every image.
+  `calibration-base`, or the vnlog or libdogleg pins it builds, rebuilds and
+  re-tests every image.
 - Changes to `bin/` or `scripts/` need no rebuild: `make lint` (shellcheck),
   then `make check`, which runs every tool through the wrappers against the
   existing images.
@@ -31,6 +32,10 @@ header. Each script and Containerfile explains itself in its header comment.
 - The Makefile's image prerequisites and per-image source lists are written by
   hand; keep them in sync with each Containerfile's `FROM ${PREFIX}...` and
   `COPY --from=NAME` lines.
+- calibration-base builds libdogleg and vnlog and keeps each install tree in
+  `/stage/NAME` for the runtime images to copy (vnlog's Python module apart, in
+  `/stage/vnlog-python`, since the vnlog image has no python3). The vnlog image
+  has no build stage of its own.
 - mrcal's runtime stage is `FROM ${PREFIX}mrgingham`, which is why it resets
   `ENTRYPOINT []`.
 - Build stages share conventions; change them in every Containerfile together:

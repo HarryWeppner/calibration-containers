@@ -1,12 +1,16 @@
-# Build environment shared by the other images: Debian's toolchain, plus mrbuild
-# and libdogleg built from the pinned sources. Debian's own packages of those
-# two are too old for current mrcal and vnlog. dogleg.h goes in /usr/include,
-# where mrcal looks for it and Debian's libdogleg-dev puts it.
+# Build environment shared by the other images: Debian's toolchain, plus mrbuild,
+# libdogleg and vnlog built (and tested) from the pinned sources. Debian's own
+# packages of these are older than the pins; building vnlog here means every
+# build stage tests against the pinned vnlog too. dogleg.h goes in
+# /usr/include, where mrcal looks for it and Debian's libdogleg-dev puts it.
 #
-# Build contexts: mrbuild, libdogleg (see scripts/build-image)
+# Build contexts: mrbuild, libdogleg, vnlog (see scripts/build-image)
 #
-# Only used as a build stage, never shipped. libdogleg's install tree is kept in
-# /stage/libdogleg so that runtime images can copy just the shared library.
+# Only used as a build stage, never shipped. Each library's install tree is
+# also kept in /stage/NAME for the runtime images to copy: /stage/libdogleg,
+# /stage/vnlog (with vnlog-runtime-packages.txt, the Debian packages it needs)
+# and /stage/vnlog-python, vnlog's Python module, kept apart for the images
+# that have python3.
 
 ARG DEBIAN_IMAGE
 FROM ${DEBIAN_IMAGE}
@@ -21,7 +25,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get install -y --no-install-recommends \
         build-essential pkg-config chrpath mawk perl zsh \
         python3-dev python3-numpy python3-setuptools \
-        libsuitesparse-dev liblapack-dev
+        libsuitesparse-dev liblapack-dev \
+        moreutils libipc-run-perl libtext-diff-perl libstring-shellquote-perl \
+        liblist-moreutils-perl libtext-table-perl
 
 # mrbuild is a set of Makefile fragments and helper scripts. These are the
 # paths choose_mrbuild.mk looks for, as Debian's mrbuild package installs them
@@ -36,6 +42,29 @@ RUN make -j"$(nproc)" VERSION="$VERSION_libdogleg" \
     && make install VERSION="$VERSION_libdogleg" DESTDIR=/stage/libdogleg \
         INSTALL_ROOT_INCLUDE=/usr/include \
     && cp -a /stage/libdogleg/. / \
+    && ldconfig
+
+ARG VERSION_vnlog
+WORKDIR /src/vnlog
+COPY --from=vnlog . .
+RUN make -j"$(nproc)" VERSION="$VERSION_vnlog" all doc \
+    && make -j"$(nproc)" VERSION="$VERSION_vnlog" check \
+    && make VERSION="$VERSION_vnlog" install DESTDIR=/stage/vnlog \
+    && mkdir -p /stage/vnlog/usr/share/zsh/site-functions \
+                /stage/vnlog/usr/share/bash-completion/completions \
+                /stage/vnlog/usr/share/calibration-containers \
+                /stage/vnlog/usr/share/doc/vnlog \
+                /stage/vnlog-python/usr/lib \
+    && cp completions/zsh/*  /stage/vnlog/usr/share/zsh/site-functions/ \
+    && cp completions/bash/* /stage/vnlog/usr/share/bash-completion/completions/ \
+    && ls /stage/vnlog/usr/bin > /stage/vnlog/usr/share/calibration-containers/vnlog.tools \
+    && find . -maxdepth 1 \( -name 'README*' -o -name 'LICENSE*' \) \
+            -exec cp -t /stage/vnlog/usr/share/doc/vnlog {} + \
+    && mv /stage/vnlog/usr/lib/python3 /stage/vnlog-python/usr/lib/ \
+    && echo mawk moreutils perl \
+            liblist-moreutils-perl libtext-table-perl libstring-shellquote-perl \
+            > /stage/vnlog-runtime-packages.txt \
+    && cp -a /stage/vnlog/. /stage/vnlog-python/. / \
     && ldconfig
 
 WORKDIR /
